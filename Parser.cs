@@ -22,6 +22,9 @@ public sealed class Parser
     /// <summary>The start nonterminal.</summary>
     public string Start => _grammar.Start;
 
+    /// <summary>The compiled grammar, exposed for migration rule compilation.</summary>
+    internal CompiledGrammar Grammar => _grammar;
+
     /// <summary>Tokenizes <paramref name="text"/> using the bound lexer.</summary>
     public IReadOnlyList<LexToken> Scan(string text) => _lexer.Scan(text);
 
@@ -54,7 +57,7 @@ public sealed class Parser
         NonterminalNode root = null!;
 
         LexToken? Current() => index < tokens.Count ? tokens[index] : null;
-        string CurrentName() => Current() is { } t ? t.Name : GrammarSymbols.Eof;
+        string CurrentName() => Current() is { } t ? t.Name : GrammarSymbols.EndOfInput;
 
         // Stable expected-set calculation for a failure point. `left` is the
         // nonterminal whose production is being expanded and `remaining` is the
@@ -82,7 +85,7 @@ public sealed class Parser
             }
             if (allNullable)
                 set.UnionWith(_grammar.Follow[left]);
-            return set.OrderBy(name => name, Comparer<string>.Create(CompareLookahead)).ToArray();
+            return ToDisplayNames(set);
         }
 
         // Explicit stack frames keep parsing table-driven while preserving the
@@ -144,7 +147,7 @@ public sealed class Parser
 
     private Frame BeginExpansion(string nonterminal, LexToken? current, string sourceText)
     {
-        string lookahead = current?.Name ?? GrammarSymbols.Eof;
+        string lookahead = current?.Name ?? GrammarSymbols.EndOfInput;
         if (!_grammar.Table[nonterminal].TryGetValue(lookahead, out Production? production))
             throw SyntaxError(
                 ExpectTop(nonterminal), current, sourceText);
@@ -158,7 +161,15 @@ public sealed class Parser
         var set = new HashSet<string>(_grammar.First[nonterminal], StringComparer.Ordinal);
         if (_grammar.Nullable.Contains(nonterminal))
             set.UnionWith(_grammar.Follow[nonterminal]);
-        return set.OrderBy(name => name, Comparer<string>.Create(CompareLookahead)).ToArray();
+        return ToDisplayNames(set);
+    }
+
+    // Maps the internal end-of-input marker back to the public "EOF" display
+    // name and sorts stably with EOF last.
+    private static string[] ToDisplayNames(HashSet<string> set)
+    {
+        var names = set.Select(name => name == GrammarSymbols.EndOfInput ? GrammarSymbols.Eof : name);
+        return names.OrderBy(name => name, Comparer<string>.Create(CompareLookahead)).ToArray();
     }
 
     private static SyntaxException SyntaxError(

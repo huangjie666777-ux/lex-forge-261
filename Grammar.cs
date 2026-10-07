@@ -4,6 +4,13 @@ namespace LexForge261;
 public static class GrammarSymbols
 {
     public const string Eof = "EOF";
+
+    /// <summary>
+    /// Internal end-of-input marker used in FIRST/FOLLOW sets and the predictive
+    /// table. It deliberately cannot equal a real token name (it embeds a NUL),
+    /// so a lexer rule literally named "EOF" never collides with end-of-input.
+    /// </summary>
+    internal const string EndOfInput = "\0EOF";
 }
 
 /// <summary>A grammar symbol: either a nonterminal or a terminal (lexer rule name).</summary>

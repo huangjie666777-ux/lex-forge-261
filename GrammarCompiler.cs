@@ -208,7 +208,7 @@ public static class GrammarCompiler
         var follow = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (string nt in nonterminals)
             follow[nt] = new HashSet<string>(StringComparer.Ordinal);
-        follow[grammar.Start].Add(GrammarSymbols.Eof);
+        follow[grammar.Start].Add(GrammarSymbols.EndOfInput);
 
         changed = true;
         while (changed)

@@ -277,4 +277,38 @@ public class ParserTests
         Assert.Equal(new[] { "Ident", "If" }, ex.Expected);
         Assert.Equal("Number", ex.Actual);
     }
+
+    [Fact]
+    public void TokenNamedEof_DoesNotCollideWithEndOfInput()
+    {
+        // A lexer rule literally named "EOF" is an ordinary terminal; it must
+        // not be confused with the end-of-input marker.
+        var lexer = LexerCompiler.Compile(new LexRule[]
+        {
+            new("EOF", "end"),
+            new("Semi", ";"),
+            new("Ws", "[ \t\r\n]+", Skip: true),
+        });
+        // S -> A ;    A -> EOF | epsilon
+        // The nullable alternative must not conflict with the EOF terminal.
+        var grammar = new GrammarDefinition("S", new Production[]
+        {
+            new("s", "S", new[] { N("A"), T("Semi") }),
+            new("a-end", "A", new[] { T("EOF") }),
+            new("a-empty", "A", Array.Empty<GrammarSymbol>()),
+        });
+        Parser parser = GrammarCompiler.Compile(lexer, grammar);
+
+        NonterminalNode withEnd = parser.Parse("end;");
+        var a1 = (NonterminalNode)withEnd.Children[0];
+        Assert.Equal("a-end", a1.ProductionId);
+        Assert.Equal("EOF", ((TerminalNode)a1.Children[0]).Name);
+
+        NonterminalNode withoutEnd = parser.Parse(";");
+        Assert.Equal("a-empty", ((NonterminalNode)withoutEnd.Children[0]).ProductionId);
+
+        SyntaxException ex = Assert.Throws<SyntaxException>(() => parser.Parse("end end;"));
+        Assert.Equal("EOF", ex.Actual);
+        Assert.Equal("end", ex.ActualText);
+    }
 }

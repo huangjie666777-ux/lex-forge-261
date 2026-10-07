@@ -71,6 +71,24 @@ NonterminalNode tree = parser.Parse("let answer = 42, 7;");
 - Parse nodes: `NonterminalNode.Name`/`ProductionId` with ordered `Children`; `TerminalNode.Token` is the original `LexToken`; an epsilon production yields a nonterminal with no children.
 - The first syntax error stops the parse. `SyntaxException` reports `Actual` (token name or `EOF`), `ActualText`, `Expected` (the prediction set of the remaining suffix, stably sorted ordinal with `EOF` last), and `Offset`/`Line`/`Column`. Missing input is `EOF` at the end position, which **includes trailing skipped text** computed from the source; only LF advances the line.
 - `Parser` preserves the existing surface: `parser.Scan(text)`, `parser.Audit()`, and compilation via `GrammarCompiler.Compile` (the lexer's own `Compile`/`Scan`/`Audit` are unchanged). Repeated parses are independent and never share state.
+- A lexer rule may literally be named `EOF`: internally the end-of-input marker is a sentinel that cannot collide with a token name, so such a terminal parses and reports like any other.
+
+## Source migration
+
+`MigrationCompiler.Compile(parser, rules)` builds a reusable `SourceMigrator` from caller-ordered rules. The grammar stays the caller's own; no script language is built in. Each `MigrationRule(Id, Pattern, Replacement)` pairs a tree pattern with a replacement template:
+
+- `NodePattern.Production(ProductionId, Children)` matches a nonterminal derived by that production; child patterns are matched in order and must mirror the production's right-hand side exactly (token patterns on terminal positions with the same name, production patterns on nonterminal positions).
+- `NodePattern.Token(TokenName, Text?)` matches a terminal, optionally constrained to its original text.
+- `NodePattern.Capture(Name)` matches any single subtree and binds it.
+- The replacement is a list of `TemplatePart.Literal(Text)` and `TemplatePart.Capture(Name)`; capture references emit the captured subtree's original source text verbatim.
+
+Compilation rejects unknown production identifiers, child shapes that do not match the production, duplicate capture names, undefined template references, and duplicate rule identifiers (`MigrationCompileException`). The rule set is snapshotted; later caller mutations never affect the compiled migrator.
+
+`SourceMigrator.Migrate(source)` parses with the bound parser, then matches **preorder from the root**: the first matching rule per node wins and its subtree is not descended into; unmatched nodes are traversed further. Only nodes spanning at least one token are targets, and a capture of an empty (epsilon) subtree is a non-match. All matching uses the original tree - a single call never rewrites its own output.
+
+Target and capture ranges run from the first token's offset to the end of the last token, in original offsets, covering skipped text inside the span. Characters outside every edit are copied verbatim. The result is a `MigrationResult(Source, Edits)` with edits sorted by original offset, each carrying `RuleId`, `Offset`, `Length`, and `Replacement`. With no matches the source is returned unchanged.
+
+Every rewrite is validated by re-parsing with the same parser; a failure raises `MigrationValidationException` with the underlying `SyntaxException`/`LexerScanException` as `InnerException` and no partial result is produced.
 
 ## Pattern syntax
 
@@ -104,6 +122,7 @@ NonterminalNode tree = parser.Parse("let answer = 42, 7;");
 - `Grammar.cs` / `ParseTree.cs` - grammar model (`Production`, `GrammarSymbol`, `GrammarDefinition`), exceptions, and parse tree nodes.
 - `GrammarCompiler.cs` - validation, nullable/FIRST/FOLLOW fixed points, nullable-prefix left-recursion rejection, and the EOF-aware predictive table.
 - `Parser.cs` - table-driven full-input parsing, ordered tree construction, and first-error reporting.
+- `Migration.cs` - tree-pattern/template migration rules, `MigrationCompiler`, and `SourceMigrator`.
 - `LexForge261.Tests` - xUnit tests; `LexForge261.Demo` - runnable example.
 
 ## Build, test, demo

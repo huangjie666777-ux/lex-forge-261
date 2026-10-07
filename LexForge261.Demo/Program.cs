@@ -160,3 +160,78 @@ catch (GrammarCompileException ex)
         $"Grammar rejected: {ex.Nonterminal} on {ex.Lookahead} conflicts " +
         $"[{string.Join(", ", ex.ProductionIds)}]");
 }
+// ---------------------------------------------------------------------------
+// Source migration: ordered tree-pattern rules rewrite the original text.
+// ---------------------------------------------------------------------------
+var migrationRules = new List<MigrationRule>
+{
+    // args-cons -> , Number args-empty   ===>   , <n> , 0
+    new("append-zero",
+        new NodePattern.Production("args-cons", new NodePattern[]
+        {
+            new NodePattern.Token("Comma"),
+            new NodePattern.Capture("n"),
+            new NodePattern.Production("args-empty", Array.Empty<NodePattern>()),
+        }),
+        new TemplatePart[]
+        {
+            new TemplatePart.Literal(", "),
+            new TemplatePart.Capture("n"),
+            new TemplatePart.Literal(", 0"),
+        }),
+};
+SourceMigrator migrator = MigrationCompiler.Compile(parser, migrationRules);
+
+Console.WriteLine();
+Console.WriteLine("Source migration");
+Console.WriteLine("----------------");
+const string oldScript = "let answer = 42,   7;";
+MigrationResult migrated = migrator.Migrate(oldScript);
+Console.WriteLine($"Old: {oldScript}");
+Console.WriteLine($"New: {migrated.Source}");
+foreach (MigrationEdit edit in migrated.Edits)
+    Console.WriteLine($"  rule {edit.RuleId}: [{edit.Offset}..{edit.Offset + edit.Length}) -> \"{edit.Replacement}\"");
+
+// A rule whose template produces unparseable text is rejected outright:
+// nothing is returned and the reason is reported.
+var badRules = new List<MigrationRule>
+{
+    new("break-it",
+        new NodePattern.Production("stmt", new NodePattern[]
+        {
+            new NodePattern.Token("KwLet"),
+            new NodePattern.Capture("id"),
+            new NodePattern.Token("Assign"),
+            new NodePattern.Capture("expr"),
+            new NodePattern.Token("Semi"),
+        }),
+        new TemplatePart[] { new TemplatePart.Literal("let = ;") }),
+};
+SourceMigrator badMigrator = MigrationCompiler.Compile(parser, badRules);
+try
+{
+    badMigrator.Migrate("let answer = 42;");
+}
+catch (MigrationValidationException ex)
+{
+    Console.WriteLine($"Rewrite rejected: {ex.Message}");
+}
+
+// Illegal rule sets fail at compile time (here: undefined template reference).
+try
+{
+    MigrationCompiler.Compile(parser, new List<MigrationRule>
+    {
+        new("bad-ref",
+            new NodePattern.Production("expr", new NodePattern[]
+            {
+                new NodePattern.Token("Number"),
+                new NodePattern.Capture("args"),
+            }),
+            new TemplatePart[] { new TemplatePart.Capture("missing") }),
+    });
+}
+catch (MigrationCompileException ex)
+{
+    Console.WriteLine($"Rule rejected: {ex.Message}");
+}
