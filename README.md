@@ -71,6 +71,42 @@ NonterminalNode tree = parser.Parse("let answer = 42, 7;");
 - Parse nodes: `NonterminalNode.Name`/`ProductionId` with ordered `Children`; `TerminalNode.Token` is the original `LexToken`; an epsilon production yields a nonterminal with no children.
 - The first syntax error stops the parse. `SyntaxException` reports `Actual` (token name or `EOF`), `ActualText`, `Expected` (the prediction set of the remaining suffix, stably sorted ordinal with `EOF` last), and `Offset`/`Line`/`Column`. Missing input is `EOF` at the end position, which **includes trailing skipped text** computed from the source; only LF advances the line.
 - `Parser` preserves the existing surface: `parser.Scan(text)`, `parser.Audit()`, and compilation via `GrammarCompiler.Compile` (the lexer's own `Compile`/`Scan`/`Audit` are unchanged). Repeated parses are independent and never share state.
+- End-of-input is tracked with an internal sentinel distinct from the public `"EOF"` name, so an ordinary lexer rule may be named `EOF` without colliding with the end-of-input marker in FIRST/FOLLOW sets or the predictive table.
+
+## Structured source migration
+
+`SourceMigrator` rewrites source text structurally: the caller supplies ordered migration rules over their own grammar (no built-in script language), the migrator parses the original text with the existing parser, matches rules against the original parse tree, and splices replacements using original offsets. Pure library API - no frontend, no HTTP.
+
+```csharp
+var rules = new MigrationRule[]
+{
+    // expr -> Number Args: rewrite the leading literal, keep the rest verbatim.
+    new("zero-leading-number",
+        new TreePattern.Nonterminal("expr", new TreePattern[]
+        {
+            new TreePattern.Terminal("Number"),
+            new TreePattern.Capture("rest"),
+        }),
+        new TemplatePart[]
+        {
+            new TemplatePart.Literal("0"),
+            new TemplatePart.CaptureReference("rest"),
+        }),
+};
+SourceMigrator migrator = SourceMigrator.Compile(parser, rules);
+MigrationResult result = migrator.Migrate("let answer = 42,\t7;");
+// result.Source == "let answer = 0,\t7;"
+// result.Edits  == [ SourceEdit("zero-leading-number", 13, 5, "0,\t7") ]
+```
+
+- **Rules** - `MigrationRule(Id, Pattern, Replacement)`; identifiers must be unique and rules apply in declaration order. The rule list is snapshotted at compile time: later caller mutations never affect the compiled migrator.
+- **Patterns** - `TreePattern.Nonterminal(productionId, children)` matches a nonterminal by production identifier with exactly one ordered child pattern per right-hand-side symbol; `TreePattern.Terminal(tokenName, text?)` matches a terminal leaf by token name, optionally constrained to exact source text; `TreePattern.Capture(name)` matches any single subtree and binds it. A rule's root pattern must be a nonterminal pattern.
+- **Compile-time validation** (`MigrationCompileException`, carrying `RuleId`) - unknown production identifiers, child patterns that do not match the production's right-hand-side shape (count, terminal/nonterminal kind, terminal name, or the production's left-hand side), duplicate capture names within a rule, and template references to undefined captures are all rejected before any migration runs.
+- **Templates** - `TemplatePart.Literal(text)` emits verbatim text; `TemplatePart.CaptureReference(name)` emits the original source text of the captured subtree. Parts are concatenated directly; nothing is reformatted.
+- **Matching** - pre-order from the root. At each node the first matching rule wins and its descendants are not visited; when no rule matches, traversal continues into the children. Only nodes covering at least one token are targets, and a capture of a token-less (epsilon) subtree does not match. All matches are computed against the original tree: a single `Migrate` call never rewrites text produced by its own edits.
+- **Ranges** - targets and captures span from their first token's offset to their last token's end (skipped text in between is preserved); characters outside every edit are copied verbatim. `ParseNode.TryGetTokenRange(out offset, out length)` exposes the same range computation.
+- **Result** - `MigrationResult(Source, Edits)` with edits sorted by original offset, each carrying `RuleId`, `Offset`, `Length`, and `Replacement`. When nothing matches, the original source is returned unchanged with an empty edit list.
+- **Validation** - the rewritten source is re-parsed completely with the same parser; if it fails, `MigrationValidationException` reports the reason and no partial result is returned.
 
 ## Pattern syntax
 
@@ -102,6 +138,7 @@ NonterminalNode tree = parser.Parse("let answer = 42, 7;");
 - `RuleAudit.cs` - exact DFA reachability analysis (intersections, winning witnesses, union shadowing).
 - `Lexer.cs` - `LexerCompiler`, the scanning loop, and `Lexer.Audit()`.
 - `Grammar.cs` / `ParseTree.cs` - grammar model (`Production`, `GrammarSymbol`, `GrammarDefinition`), exceptions, and parse tree nodes.
+- `Migration.cs` - structured source migration: tree patterns, replacement templates, rule compilation/validation, and offset-based rewrite execution.
 - `GrammarCompiler.cs` - validation, nullable/FIRST/FOLLOW fixed points, nullable-prefix left-recursion rejection, and the EOF-aware predictive table.
 - `Parser.cs` - table-driven full-input parsing, ordered tree construction, and first-error reporting.
 - `LexForge261.Tests` - xUnit tests; `LexForge261.Demo` - runnable example.

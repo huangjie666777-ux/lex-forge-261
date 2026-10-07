@@ -45,3 +45,42 @@ public sealed class NonterminalNode : ParseNode
         ProductionId = productionId;
     }
 }
+
+/// <summary>Source-range helpers over parse trees, based on original token offsets.</summary>
+public static class ParseNodeExtensions
+{
+    /// <summary>
+    /// Computes the source range covered by the node: from the offset of its
+    /// first token to the end of its last token (skipped text in between is
+    /// included). Returns false for subtrees that contain no token at all
+    /// (e.g. a nullable nonterminal derived from epsilon).
+    /// </summary>
+    public static bool TryGetTokenRange(this ParseNode node, out int offset, out int length)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        LexToken? first = null;
+        LexToken? last = null;
+        Walk(node);
+        if (first is null)
+        {
+            offset = 0;
+            length = 0;
+            return false;
+        }
+        offset = first.Offset;
+        length = last!.Offset + last.Length - first.Offset;
+        return true;
+
+        void Walk(ParseNode current)
+        {
+            if (current is TerminalNode leaf)
+            {
+                first ??= leaf.Token;
+                last = leaf.Token;
+                return;
+            }
+            foreach (ParseNode child in current.Children)
+                Walk(child);
+        }
+    }
+}

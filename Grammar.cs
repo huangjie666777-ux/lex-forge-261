@@ -6,6 +6,21 @@ public static class GrammarSymbols
     public const string Eof = "EOF";
 }
 
+/// <summary>
+/// Internal end-of-input lookahead key used inside FOLLOW sets and the
+/// predictive table. It is deliberately distinct from
+/// <see cref="GrammarSymbols.Eof"/> so that an ordinary lexer rule named
+/// "EOF" never collides with the end-of-input marker.
+/// </summary>
+internal static class LookaheadSymbols
+{
+    public const string EndOfInput = "\0EOF\0";
+
+    /// <summary>Maps an internal table key to its public display name.</summary>
+    public static string Display(string name) =>
+        name == EndOfInput ? GrammarSymbols.Eof : name;
+}
+
 /// <summary>A grammar symbol: either a nonterminal or a terminal (lexer rule name).</summary>
 public readonly record struct GrammarSymbol(string Name, bool IsTerminal)
 {

@@ -160,3 +160,48 @@ catch (GrammarCompileException ex)
         $"Grammar rejected: {ex.Nonterminal} on {ex.Lookahead} conflicts " +
         $"[{string.Join(", ", ex.ProductionIds)}]");
 }
+
+// ---------------------------------------------------------------------------
+// Structured source migration: ordered tree-pattern rules with capture-based
+// replacement templates, applied over the original parse tree and validated
+// by re-parsing with the same parser.
+// ---------------------------------------------------------------------------
+Console.WriteLine();
+Console.WriteLine("Source migration");
+Console.WriteLine("----------------");
+
+static TreePattern Nt(string id, params TreePattern[] children) =>
+    new TreePattern.Nonterminal(id, children);
+
+// expr -> Number Args: rewrite the leading literal, keep the rest verbatim.
+var migrationRules = new MigrationRule[]
+{
+    new("zero-leading-number",
+        Nt("expr", new TreePattern.Terminal("Number"), new TreePattern.Capture("rest")),
+        new TemplatePart[] { new TemplatePart.Literal("0"), new TemplatePart.CaptureReference("rest") }),
+};
+SourceMigrator migrator = SourceMigrator.Compile(parser, migrationRules);
+
+const string oldScript = "let answer = 42,\t7;";
+MigrationResult migrated = migrator.Migrate(oldScript);
+Console.WriteLine($"Before: {oldScript}");
+Console.WriteLine($"After:  {migrated.Source}");
+foreach (SourceEdit edit in migrated.Edits)
+    Console.WriteLine($"  rule {edit.RuleId}: [{edit.Offset}..{edit.Offset + edit.Length}) -> \"{edit.Replacement}\"");
+
+// A rule whose replacement breaks the grammar is rejected: nothing is returned.
+var brokenRules = new MigrationRule[]
+{
+    new("drop-leading-number",
+        Nt("expr", new TreePattern.Terminal("Number"), new TreePattern.Capture("rest")),
+        new TemplatePart[] { new TemplatePart.CaptureReference("rest") }),
+};
+SourceMigrator broken = SourceMigrator.Compile(parser, brokenRules);
+try
+{
+    broken.Migrate(oldScript);
+}
+catch (MigrationValidationException ex)
+{
+    Console.WriteLine($"Invalid rewrite rejected: {ex.Message}");
+}
